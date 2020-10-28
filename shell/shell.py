@@ -5,7 +5,7 @@ import os, sys, time, re
 curr = os.getcwd()
 spl = curr.split("/")
 short = spl[-1]
-#execute = ["wc", "shell2.py"] #default args for using execve()
+
 
 dir_list = spl #probably don't need this
 
@@ -15,10 +15,9 @@ def ls():
 	directory_list = os.listdir(curr)
 	for i in directory_list:
 		print(i, end = "   ")
-#	print("")
 	return
 
-def lsdir(directory):
+def lsdir(directory):#change directory based on user's input
 	change = False
 	original = curr
 	directory_list = os.listdir(curr)
@@ -27,7 +26,7 @@ def lsdir(directory):
 		split = directory.split("/")
 		directory = split[-1]
 		index = 0
-		while(index != len(split)-1): #change directory based on usr input
+		while(index != len(split)-1):
 			if split[index] == '':
 				index +=1
 			os.chdir(split[index]) 
@@ -66,7 +65,7 @@ def get_short():
 	global short
 	curr = os.getcwd()
 	spl = curr.split("/")
-	short = "\033[1;35;40m %s\x1b[0m" % spl[-1]
+	short = "\033[1;40;40m %s\x1b[0m" % spl[-1]
 	os.write(1, (short + "$ ").encode())
 	return
 
@@ -103,7 +102,7 @@ def loop_shell():
 		if user_input[0] == 'exit':
 			sys.exit(1)
 			
-		if "cd" in user_input:
+		if "cd" in user_input:#changes directory
 			try:
 				os.chdir(user_input[1])
 			except FileNotFoundError:
@@ -125,7 +124,7 @@ def loop_shell():
 				os.write(2, ("fork failed, returning %d\n" % rc).encode())
 				sys.exit(1)
 
-			elif rc == 0:              #son or daughter (#not assuming)
+			elif rc == 0:            
 				if user_input[0].startswith("/"):
 					try:
 						os.execve(user_input[0], user_input, os.environ) # try to exec program
@@ -135,7 +134,7 @@ def loop_shell():
 				simple_pipe(user_input)
 				execChild(user_input)
 				
-			else:                           # parent (forked ok)
+			else:                      
 				if w: #wait
 					code = os.wait() 
 					if code[1] != 0 and code[1] != 256:
@@ -165,7 +164,7 @@ def parse2(cmdString):
 	return cmd.split(), outFile, inFile
 
 
-def simple_pipe(args): #args is a list so I can't split
+def simple_pipe(args):
 	
 	if '|' in args:
 		
