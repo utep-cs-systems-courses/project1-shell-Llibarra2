@@ -1,147 +1,239 @@
 #! /usr/bin/env python3
 
-import os, sys, re
+import os, sys, time, re
 
-# save parent pid
-pid = os.getpid() 
+curr = os.getcwd()
+spl = curr.split("/")
+short = spl[-1]
+#execute = ["wc", "shell2.py"] #default args for using execve()
 
-def get_prompt(): 
-    return os.read(0, 1024).decode()[:-1]
+dir_list = spl #probably don't need this
 
-def process_user_query(action): 
-    if action == '':
-        if not os.isatty(sys.stdin.fileno()): 
-            sys.exit(0)
-        return
+#maybe continuously update dir list and only allow redirects if in current list
 
-    elif 'cd' in action:#changes in directory
-            cmd, path = re.split(' ', action)
-            if path != '..': 
-                path = os.getcwd() + '/' +  path
-            os.chdir(path)
+def ls():
+	directory_list = os.listdir(curr)
+	for i in directory_list:
+		print(i, end = "   ")
+#	print("")
+	return
 
-    elif '\x03' in action: 
-        sys.exit(0)
-    elif '\x7C' in action: # pipes
-        pipe(action)
-    elif '\x3e' in action: #all output in the command is inputed into the specified file
-        cmd, file_path = [i.strip() for i in re.split('[\x3e]', action)] # split by > 
-        file_path = os.getcwd() + '/' + file_path
-        cmd = [i.strip() for i in re.split('[\x20]', cmd)]
-        r = os.fork()
-        if r < 0: 
-            os.write(2, ("fork failed, returning with %d\n").encode())
-            sys.exit(1)
-        elif r == 0: 
-            os.close(1) # close stdout
-            sys.stdout = open(file_path, 'w+')
-            fd = sys.stdout.fileno()
-            os.set_inheritable(fd, True)
-            os.dup(fd)
-            global_exec(cmd)
-            os.write(2, ("Command %s not found\n" % args[0]).encode())
-            sys.exit(1) # we return with error beacuse execv overrides our current process memeory
-        else: 
-            r_child = os.waitpid(r, 0)
+def lsdir(directory):
+	change = False
+	original = curr
+	directory_list = os.listdir(curr)
+	if directory.startswith("/"):
+		change = True
+		split = directory.split("/")
+		directory = split[-1]
+		index = 0
+		while(index != len(split)-1): #change directory based on usr input
+			if split[index] == '':
+				index +=1
+			os.chdir(split[index]) 
+			index = index + 1
+	
+	if directory.endswith(".txt"):
+		fdOut = os.open(directory + ".txt", os.O_CREAT | os.O_WRONLY)
+		
+	else:
+		fdOut = os.open(directory + ".txt", os.O_CREAT | os.O_WRONLY)
+						
+	
+	for a in directory_list:
+		a = a + "\n"
+		os.write(fdOut, a.encode()) # write to output file
+	i = 0
+	if (change): 
+		while(i < len(split)-1): #return to current dir
+			os.chdir("..")
+			i = i +1
+	return
 
-    elif 'exit' in action: 
-        sys.exit(0)
-    else: 
-        execute(action)
-        
-def path(args): 
-    try: 
-        os.execve(args[0], args, os.environ)
-    except FileNotFoundError: 
-        pass
+def update_curr_dir(): 
+	curr = os.getcwd()
+	spl = curr.split("/")
+	short = spl[-1]
 
-def global_exec(args): 
-    for dir in re.split('[\x3a]', os.environ['PATH']): # :
-        program = "%s/%s" % (dir, args[0])
-        try: 
-            os.execve(program, args, os.environ)
-        except FileNotFoundError:
-            pass
+def get_current():
+	global curr
+	curr = os.getcwd()
+	os.write(1, (curr + "\n").encode())
+	return
 
+def get_short():
+	global curr
+	global short
+	curr = os.getcwd()
+	spl = curr.split("/")
+	short = "\033[1;35;40m %s\x1b[0m" % spl[-1]
+	os.write(1, (short + "$ ").encode())
+	return
 
-def pipe(action): 
-    r,w = os.pipe()
-    for f in (r,w): 
-        os.set_inheritable(f, True)
+def loop_shell():
+	global short
+	
+	while True:
+		if 'PS1' in os.environ:
+			os.write(1,(os.environ['PS1']).encode())
+			try:
+#				inp = os.read(0,256)
+#				user_input = inp.decode().split()
+				user_input = [str(n) for n in input().split()]
+			except EOFError: 
+				sys.exit(1)
+		else:
+			get_short()
+			try:
+#				inp = os.read(0,256)
+#				user_input = inp.decode().split()
+				user_input = [str(n) for n in input().split()]
+			except EOFError: 
+				sys.exit(1)
+		w = True
+		
+		if user_input == '\n':
+			loop_shell()
+			return
+		
+		if not user_input:
+			loop_shell()
+			return
+		
+		if user_input[0] == 'exit':
+			sys.exit(1)
+			
+		if "cd" in user_input:
+			try:
+				os.chdir(user_input[1])
+			except FileNotFoundError:
+				os.write(1, ("-bash: cd: %s: No such file or directory\n" % directory).encode())
+			
+			continue
+			
+		else:
+			rc = os.fork()  
+		
+			if '&' in user_input:
+				user_input.remove("&")
+				w = False
+				
+			if user_input[0] == 'exit':
+				quit(1)
+				
+			if rc < 0:
+				os.write(2, ("fork failed, returning %d\n" % rc).encode())
+				sys.exit(1)
+
+			elif rc == 0:              #son or daughter (#not assuming)
+				if user_input[0].startswith("/"):
+					try:
+						os.execve(user_input[0], user_input, os.environ) # try to exec program
+					except FileNotFoundError:
+						pass 
+				redirect(user_input)
+				simple_pipe(user_input)
+				execChild(user_input)
+				
+			else:                           # parent (forked ok)
+				if w: #wait
+					code = os.wait() 
+					if code[1] != 0 and code[1] != 256:
+						os.write(2, ("Program terminated with exit code: %d\n" % code[1]).encode())
+					
+
+def parse2(cmdString):
+	outFile = None
+	inFile = None
+	cmdString = ' '.join([str(elem) for elem in cmdString])
+	cmd = ''
+	cmdString = re.sub(' +', ' ', cmdString)
+	
+	if '>' in cmdString:
+		[cmd, outFile] = cmdString.split('>',1)
+		outFile = outFile.strip()
+		
+	if '<' in cmd:
+		[cmd, inFile] = cmd.split('<', 1)
+		inFile = inFile.strip()
     
-    cmds = [i.strip() for i in re.split('[\x7C]', action)] # split by |
-    childs = []
-    parent = True
-    even = 0
-    for cmd in cmds: 
-        even += 1
-        rc = os.fork()
-        if rc: 
-            childs.append(rc)
-        else: 
-            parent = False
-            if even % 2 != 0: 
-                os.close(1) # close stdout
-                write = os.dup(w)
-                for i in (r,w):
-                    os.close(i)
-
-                sys.stdout = os.fdopen(write, "w")
-                fd = sys.stdout.fileno()
-                os.set_inheritable(fd, True)
-            else: 
-                os.close(0) # close stdin
-                read = os.dup(r)
-                for i in (r,w):
-                    os.close(i)
-
-                sys.stdin = os.fdopen(read, "r")
-                fd = sys.stdin.fileno()
-                os.set_inheritable(fd, True)
-
-            args = [i.strip() for i in re.split('[\x20]', cmd)]
-            global_exec(args)
-            break
-    if parent: 
-        for i in (r,w): 
-            os.close(i)
-
-        for child in childs: 
-            os.waitpid(child, 0)
-   
-def execute(action): 
-    rc = os.fork()
-    if rc < 0: 
-        os.write(2, ("FAIL, returning with %d\n").encode())
-        sys.exit(1)
-    elif rc == 0:
-        args = [i.strip() for i in re.split('[\x20]', action)] # split by space
-        if '\x2f' in args[0]: 
-            path(args)
-        else:
-            global_exec(args)
-        os.write(2, ("Action %s not found\n" % args[0]).encode())
-        sys.exit(1) # we return with error beacuse execv overrides our current process memeory
-    else: 
-        r_child = os.waitpid(rc, 0) 
-            
+	elif outFile != None and '<' in outFile:
+		[outFile, inFile] = outFile.split('<', 1)
+		
+		outFile = outFile.strip()
+		inFile = inFile.strip()
+	return cmd.split(), outFile, inFile
 
 
+def simple_pipe(args): #args is a list so I can't split
+	
+	if '|' in args:
+		
+		write = args[0:args.index("|")]
+		read = args[args.index("|") + 1:]
+		
+		pr,pw = os.pipe()
 
-#file descriptor 0 is for std input
-#file descriptor 1 is for std output
-#file descriptor 2 is for std error
+		for f in (pr, pw):
+			os.set_inheritable(f, True)
 
-try: 
-    sys.ps1 = os.environ['PS1']
-except KeyError: 
-    sys.ps1 = '$ '
+		fork = os.fork()
+		if fork < 0:
+				os.write(2, ("fork failed, returning %d\n" % rc).encode())
+				sys.exit(1)
 
-if sys.ps1 is None:
-    sys.ps1 = '$ '
+		elif fork == 0: #son or daughter (#not assuming)
+			os.close(1)
+			os.dup2(pw,1) #redirect inp to child
+			for fd in (pr, pw):
+				os.close(fd)
+			execChild(write)
+			
+		else:  #parent
+			os.close(0)
+			os.dup2(pr,0) #redirect outp to parent
+			for fd in (pr, pw):
+				os.close(fd)
+			execChild(read)
+			if "|" in read:
+				pipe(read)
+			execChild(read)
+			
+def redirect(args):
+	if '>' in args or '<' in args:
+		cmd,outFile,inFile = parse2(args)
+		if '>' in args:
+			cmd = cmd[0]
+		
+	if '>' in args:
+		os.close(1)
+		os.open(outFile, os.O_CREAT | os.O_WRONLY)
+		os.set_inheritable(1,True)
+		
+		execute = [cmd,outFile]
 
-if __name__ == '__main__':
-    while True:
-        os.write(1, sys.ps1.encode())
-        action = get_prompt()
-        process_user_query(action)
+		execChild(execute) #FIXME: output file only one line  #maybe I should just call lsdir
+		
+	if '<' in args:
+		os.close(0) 
+		os.open(args[-1], os.O_RDONLY)
+		os.set_inheritable(0,True)
+		
+		execute = args[0:args.index("<")]
+		execChild(execute)
+	
+
+def execChild(execute):
+	for dir in re.split(":", os.environ['PATH']): # try each directory in the path
+		program = "%s/%s" % (dir, execute[0])
+		try:
+			os.execve(program, execute, os.environ) # try to exec program
+		except FileNotFoundError:
+			pass 
+	time.sleep(1) 
+	os.write(2, ("-bash: %s: command not found\n" % execute[0]).encode())
+	quit(1)
+	
+	
+if __name__ == "__main__":
+	loop_shell()
